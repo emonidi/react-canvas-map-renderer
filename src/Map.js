@@ -23,22 +23,24 @@ export default class Map extends Component {
 
     initializeMap = () => {
         let ctx = this.canvas.getContext('2d');
-        ctx.clearRect(0, 0, this.state.width, this.state.height);
         
+        let offScreenCanvas = document.createElement('canvas');
+        offScreenCanvas.width = this.state.width;
+        offScreenCanvas.height = this.state.height;
+
+        ctx.clearRect(0, 0, this.state.width, this.state.height);
+
         let z = select(this.canvas).call(zoom()
-            .scaleExtent([0.1, 3])
+            .scaleExtent([0.1, 10])
             .on("zoom", this.zoomed));
 
         this.getMapData(this.props.bbox).then((geojson) => {
             let center = geoCentroid(geojson);
             let { scale, translate } = this.getScaleAndTranslate(this.props.bbox, this.state.width, this.state.height);
             let projection = geoMercator().translate(translate).scale(scale);
-            let path = geoPath().projection(projection).context(ctx);
-            //let topo = topojson.topology({t:geojson});
-            this.setState({ path, projection, ctx, geojson, scale, translate });
-            // this.draw(geojson.features,ctx,path);
+            let path = geoPath().projection(projection).context(offScreenCanvas);
+            this.setState({offScreenCanvas, ctx, geojson });
             this.zoomed();
-            
         })
     }
 
@@ -68,7 +70,7 @@ export default class Map extends Component {
     }
 
     getMapData = (bbox) => {
-        
+
         return new Promise((resolve, reject) => {
             fetch(`https://www.openstreetmap.org/api/0.6/map?bbox=${bbox.left},${bbox.bottom},${bbox.right},${bbox.top}`)
                 .then(res => res.text())
@@ -83,50 +85,59 @@ export default class Map extends Component {
 
     draw(features, ctx, path) {
         features.forEach((feature) => {
-            const properties =  feature.properties;
+            ctx.beginPath();
+            const properties = feature.properties;
             if (properties.highway) {
-                ctx.beginPath();
                 path(feature);
                 if (this.propertyIs(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'service', 'track'], properties.highway)) {
-                    ctx.strokeStyle = 'brown';
-                    ctx.lineWidth = properties.highway === 'primary' ? 7 : 4;
-                    ctx.stroke();
-                    switch(properties.highway){
+                    ctx.strokeStyle = '#ccc';
+                    switch (properties.highway) {
                         case 'motorway':
-                        ctx.strokeStyle = 'rgb(230,147,163)'
-                        ctx.lineWidth = 9;
-                        break;
+                            ctx.lineWidth = 9;
+                            break;
                         case 'primary':
-                        ctx.strokeStyle = 'orange'
-                        ctx.lineWidth = 6;
-                        break;
+                            ctx.lineWidth = 7;
+                            break;
+                        default:
+                            ctx.lineWidth = 5;
+                    }
+                    ctx.stroke();
+                    switch (properties.highway) {
+                        case 'motorway':
+                            ctx.strokeStyle = 'rgb(230,147,163)'
+                            ctx.lineWidth = 7;
+                            break;
+                        case 'primary':
+                            ctx.strokeStyle = 'orange'
+                            ctx.lineWidth = 5;
+                            break;
                         case 'secondary':
                         case 'tertiary':
                         case 'unclassified':
                         case 'service':
                         case 'trunk':
                         default:
-                        ctx.strokeStyle = 'white'
-                        ctx.lineWidth = 3;
-                        break;
+                            ctx.strokeStyle = 'white'
+                            ctx.lineWidth = 3;
+                            break;
                     }
                     ctx.stroke();
-                }else if(this.propertyIs(['pedestrian'],properties.highway)){
+                } else if (this.propertyIs(['pedestrian'], properties.highway)) {
                     ctx.fillStyle = '#ccc';
                     ctx.strokeStyle = '#ccc';
                     ctx.lineWidth = 1;
                     ctx.stroke();
                     ctx.fill();
                 }
-                ctx.closePath();
+
             }
 
-            if(properties.leisure && this.propertyIs(['park'],properties.leisure) ){
+            if (properties.leisure && this.propertyIs(['park'], properties.leisure)) {
                 ctx.strokeStyle = '#6D8700';
                 ctx.fillStyle = '#6D8700';
                 ctx.stroke();
                 ctx.fill();
-                ctx.closePath();
+
             }
 
             if (properties.building) {
@@ -137,7 +148,7 @@ export default class Map extends Component {
                 path(feature);
                 ctx.stroke();
                 ctx.fill();
-                ctx.closePath();
+
             }
             if (properties.natural && feature.geometry.type === 'Polygon') {
                 ctx.beginPath();
@@ -168,9 +179,9 @@ export default class Map extends Component {
                 }
                 ctx.stroke();
                 ctx.fill();
-                ctx.closePath();
-            }
 
+            }
+            ctx.closePath();
         })
     }
 
@@ -186,24 +197,28 @@ export default class Map extends Component {
     }
 
     zoomed = () => {
-        
         let ev = event || { transform: { k: 0 } }
-        let ctx = this.state.ctx;
-        
+        let ctx = this.state.offScreenCanvas.getContext('2d');
+
         const factor = (ev.transform.k / 500);
         let { scale, translate } = this.getScaleAndTranslate({
             left: this.props.bbox.left + factor,
             bottom: this.props.bbox.bottom + factor,
             right: this.props.bbox.right - factor,
             top: this.props.bbox.top - factor,
-        }, this.state.width, this.state.height)
+        }, this.state.width, this.state.height);
+        
+        this.state.ctx.scale(ev.transform.k,ev.transform.k);
+        
         let projection = geoMercator().translate(translate).scale(scale);
         let path = geoPath().projection(projection).context(ctx);
-        this.setState({ path, projection });
+       
         ctx.save();
         ctx.clearRect(0, 0, this.state.width, this.state.height);
         this.draw(this.state.geojson.features, ctx, path);
         ctx.restore();
+        let imageData = ctx.getImageData(0,0,this.state.width,this.state.height);
+        this.state.ctx.putImageData(imageData,0,0); 
     }
 
 
