@@ -2,9 +2,9 @@ export default [
     {
         name: 'Sofia',
         bbox: {
-            left: 23.3104,
-            bottom: 42.6888,
-            right: 23.3338,
+            left: 23.3014,
+            bottom: 42.6900,
+            right: 23.3348,
             top: 42.7022,
         },
         id:0
@@ -48,5 +48,15 @@ export default [
             top: 55.7620,
         },
         id:4
+    },
+    {
+        name: 'New York',
+        bbox: {
+            left:-73.9806,
+            bottom: 40.7774,
+            right: -73.9573,
+            top: 40.7912,
+        },
+        id:5
     }
 ]

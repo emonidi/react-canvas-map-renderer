@@ -2,6 +2,8 @@ import React, { Component } from 'react';
 import * as osmtojson from 'osmtogeojson';
 import * as topojson from 'topojson';
 import { geoPath, select, geoMercator, geoCentroid, zoom, event } from 'd3';
+import { throttle } from 'lodash';
+import { ENGINE_METHOD_DIGESTS } from 'constants';
 export default class Map extends Component {
 
     constructor(props) {
@@ -23,30 +25,36 @@ export default class Map extends Component {
 
     initializeMap = () => {
         let ctx = this.canvas.getContext('2d');
-        
-        let offScreenCanvas = document.createElement('canvas');
+        ctx.mozImageSmoothingEnabled = false;  // firefox
+        ctx.imageSmoothingEnabled = false;
+        let self = this;
+        let offScreenCanvas =  document.createElement('canvas');
         offScreenCanvas.width = this.state.width;
         offScreenCanvas.height = this.state.height;
+        let ofsCtx = offScreenCanvas.getContext('2d');
 
         ctx.clearRect(0, 0, this.state.width, this.state.height);
 
         let z = select(this.canvas).call(zoom()
-            .scaleExtent([0.1, 10])
-            .on("zoom", this.zoomed));
+            .scaleExtent([0.1, 20])
+            .on("zoom",(ev,to)=>{
+                return this.zoomed(true);
+            }));
 
         this.getMapData(this.props.bbox).then((geojson) => {
             let center = geoCentroid(geojson);
-            let { scale, translate } = this.getScaleAndTranslate(this.props.bbox, this.state.width, this.state.height);
+            let { scale, translate } = this.getScaleAndTranslate(this.props.bbox, this.state.width, this.state.height,1);
             let projection = geoMercator().translate(translate).scale(scale);
-            let path = geoPath().projection(projection).context(offScreenCanvas);
-            this.setState({offScreenCanvas, ctx, geojson });
-            this.zoomed();
+            let path = geoPath().projection(projection).context(ofsCtx);
+            this.setState({ ofsCtx, ctx, geojson,projection, path });
+            this.scaleProjection(scale,translate);
         })
     }
 
-    getScaleAndTranslate = (boundBox, width, height) => {
+    getScaleAndTranslate = (boundBox, width, height,zoom = 1) => {
         let projection = geoMercator().scale(1).translate([0, 0]);
         let path = geoPath().projection(projection);
+        
         let N = boundBox.top,
             E = boundBox.left,
             W = boundBox.right,
@@ -61,9 +69,8 @@ export default class Map extends Component {
                         [E, S]
                     ]]
             };
-
         let b = path.bounds(bbox),
-            s = .95 / Math.max((b[1][0] - b[0][0]) / width, (b[1][1] - b[0][1]) / height),
+            s = zoom / Math.max((b[1][0] - b[0][0]) / width, (b[1][1] - b[0][1]) / height),
             t = [(width - s * (b[1][0] + b[0][0])) / 2, (height - s * (b[1][1] + b[0][1])) / 2];
 
         return { scale: s, translate: t }
@@ -84,6 +91,7 @@ export default class Map extends Component {
     }
 
     draw(features, ctx, path) {
+        ctx.save();
         features.forEach((feature) => {
             ctx.beginPath();
             const properties = feature.properties;
@@ -133,15 +141,14 @@ export default class Map extends Component {
             }
 
             if (properties.leisure && this.propertyIs(['park'], properties.leisure)) {
-                ctx.strokeStyle = '#6D8700';
-                ctx.fillStyle = '#6D8700';
+                ctx.strokeStyle = 'rgb(201,249,205)';
+                ctx.fillStyle = 'rgb(201,249,205)';
+                path(feature);
                 ctx.stroke();
                 ctx.fill();
-
             }
 
             if (properties.building) {
-                ctx.beginPath();
                 ctx.strokeStyle = 'rgb(181,167,157)';
                 ctx.fillStyle = 'rgb(217,208,201)'
                 ctx.strokeWidth = 1;
@@ -151,7 +158,6 @@ export default class Map extends Component {
 
             }
             if (properties.natural && feature.geometry.type === 'Polygon') {
-                ctx.beginPath();
                 path(feature);
                 switch (feature.properties.natural) {
                     case 'water':
@@ -183,6 +189,7 @@ export default class Map extends Component {
             }
             ctx.closePath();
         })
+        ctx.restore();
     }
 
     propertyIs(types, type) {
@@ -196,29 +203,38 @@ export default class Map extends Component {
         return result;
     }
 
-    zoomed = () => {
-        let ev = event || { transform: { k: 0 } }
-        let ctx = this.state.offScreenCanvas.getContext('2d');
+    zoomed = (throttled) => {
+        let self = this;
 
-        const factor = (ev.transform.k / 500);
-        let { scale, translate } = this.getScaleAndTranslate({
+        let k = event.transform.k;
+        
+        const factor = (k / 500);
+        const  bounds = {
             left: this.props.bbox.left + factor,
             bottom: this.props.bbox.bottom + factor,
             right: this.props.bbox.right - factor,
             top: this.props.bbox.top - factor,
-        }, this.state.width, this.state.height);
+        }
+        let { scale, translate } = this.getScaleAndTranslate(bounds, this.state.width, this.state.height, k);
         
-        this.state.ctx.scale(ev.transform.k,ev.transform.k);
+        self.scaleProjection(scale,translate);
+    }
+
+    scaleProjection = (scale,translate)=>{
+        let ctx = this.state.ofsCtx
+        let projection = this.state.projection.translate(translate).scale(scale);
+        let path = this.state.path.projection(projection).context(ctx);
         
-        let projection = geoMercator().translate(translate).scale(scale);
-        let path = geoPath().projection(projection).context(ctx);
-       
-        ctx.save();
+        
+        let start = console.time();
         ctx.clearRect(0, 0, this.state.width, this.state.height);
         this.draw(this.state.geojson.features, ctx, path);
-        ctx.restore();
-        let imageData = ctx.getImageData(0,0,this.state.width,this.state.height);
-        this.state.ctx.putImageData(imageData,0,0); 
+        console.timeEnd(start);
+        
+        let imageData = ctx.getImageData(0, 0, this.state.width, this.state.height);
+        this.state.ctx.putImageData(imageData, 0, 0);
+
+        this.setState({projection,path})
     }
 
 
